@@ -66,6 +66,7 @@ def test_lab_check_catches_a_bad_onboarding_section(bad, where):
 def test_start_refuses_bad_ids_and_people_already_in_the_lab(tmp_path):
     st, lb = store(tmp_path), lab()
     for oid, slack, what in (("Dana!", "U0DANA001", "lab id"),
+                             ("dana_s", "U0DANA001", "lab id"),        # the intake's owner rule
                              ("dana", "dana", "Slack member ID"),
                              ("alice", "U0DANA001", "already a human"),
                              ("dana", "U00000001", "already alice")):

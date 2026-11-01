@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from ..member_env import MemberEnvError, check_name
 
 STORE = "~/.local/state/agentic-lab/onboarding.json"
-_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")     # what the intake takes as an owner
 _SLACK_USER = re.compile(r"^[UW][A-Z0-9]{6,}$")
 _GITHUB = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{1,29}$")
@@ -232,7 +232,7 @@ class Onboardings:
 
     def start(self, lab, oid, slack_user, name, by):
         if not _ID.match(oid or ""):
-            raise OnboardingError(f"{oid!r}: a lab id is lowercase letters, digits, '-', '_'")
+            raise OnboardingError(f"{oid!r}: a lab id is lowercase letters, digits and '-'")
         if not _SLACK_USER.match(slack_user or ""):
             raise OnboardingError(f"{slack_user!r} isn't a Slack member ID (U…)")
         for hid, h in lab.humans.items():
