@@ -286,6 +286,35 @@ secretary commit carries a `Lab-Agent: <name> (secretary)` trailer, since an ide
 shared by several agents. Recommended: a fine-grained token limited to the config repo
 (Contents and Pull requests: read and write); branch protection keeps it off `main`.
 
+### 4.5 Onboarding a newcomer
+
+The secretary guides a newcomer through **what they can do on their own**, before any admin
+work, so that by the time the admins set up their agents everything the newcomer owes is
+in: a few answers, their Claude token, their keys for outside services, and the lab's own
+steps. Admin work (lab.yaml, machines, the manager's Slack app, GitHub) isn't on it: it
+stays with the admins and their tools.
+
+- **Started from the console** by an admin, as the secretary's user: `lab onboarding start
+  <id> --slack U… --name "…"`, with the lab id the newcomer will have. They needn't be in
+  lab.yaml: their secrets are stored under that id through the intake, ready for the deploy
+  that adds them. Within a minute the secretary DMs them.
+- **A Claude agent with instructions, not a scripted flow.** The lab's own `onboarding:`
+  section in lab.yaml says what to ask (`ask`: github, manager_name, ssh_key), which keys
+  (`keys`: member-key names, e.g. a W&B key), the admins' own steps (`items`: `{id, text}`,
+  confirmed by the newcomer) and free-form `instructions` (tips, links, where to get each
+  key). The agent follows them, one step per message.
+- **The checklist is code**, computed every time from the stored answers and secrets,
+  never from what the agent remembers. Answers are checked before they're stored (a GitHub
+  user that exists, a public SSH key and never a private one, a manager name not taken).
+  `lab onboarding status [id]` shows it on the console.
+- **When every item is done**, the secretary DMs the admins with what was collected. When a
+  secret arrives through the intake (not the chat), the secretary carries on by itself.
+- **A newcomer's session is narrow**: only the onboarding tools (their own checklist,
+  answers, one-time links for their own token and the checklist's keys), no built-in tools,
+  no lab state; the deployed layout isn't in their prompts. It ends when the onboarding
+  finishes or an admin stops it (`lab onboarding stop <id>`): until they're in lab.yaml
+  the secretary then treats them as anyone outside the lab.
+
 ---
 
 ## 5. The worker protocol (MCP over the tailnet)
@@ -756,6 +785,7 @@ host, each agent its own user: `examples/single-vm/lab.yaml`).
 | 2026-10-22 | **`gh` through a shim** that reads the identity's current token at call time; gh's config in the working folder. Each identity's **reachable repositories** are listed in the agent's prompt. |
 | 2026-10-22 | **Intake on demand** (#63): one-time links only by DM, sent when the person is ready, active 5 minutes; the intake runs only while a code is open (a systemd path unit); intake and broker hardened. Its own Unix user: later, only if it must run continuously. |
 | 2026-10-22 | **Transparent about the lab, private about the work** (#62): members see machines, states, owners and usage, not each other's instructions, results, files or approvals; anonymous viewers and agents see states and counts; admins everything. `visibility: team` to share work. Files from shared workers: the member's own `tasks/<id>/` only. Supersedes "everything is visible". |
+| 2026-11-01 | **The secretary onboards newcomers** (§4.5): only what they can do without an admin; a Claude agent following the lab's instructions, with a checklist computed in code; secrets stored under their future id before they're in lab.yaml. |
 | 2026-10-22 | **Hosts that missed a deploy catch up automatically** (#61), to the commit of `main` the rest of the lab runs: triggered by the secretary, deferred while tasks are active, 3 attempts then admins are told; `auto_catch_up: false` to opt out. |
 
 ## 14. Open questions

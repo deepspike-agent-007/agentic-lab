@@ -136,6 +136,19 @@ What it took:
   should give the lab a key of its own, scoped and revocable, not a personal one. Values
   only ever come through the intake; the secretary shows names, never values.
 
+- **A newcomer being onboarded talks to the secretary before they're in lab.yaml**
+  (`secretary/onboarding.py`, DESIGN.md §4.5). Only someone an admin named on the console
+  (`lab onboarding start`, as the secretary's user), by Slack member ID; until it finishes
+  or is stopped. Their session has no built-in tools (`tools: []`), no lab tools and no
+  lab state (the deployed layout isn't in their prompts): only their own checklist, their
+  answers (checked in code: a GitHub user name, an SSH *public* key anchored at its type
+  so no `authorized_keys` options get in, a manager name), and one-time links for their
+  own Claude token and the keys the lab's config lists, stored under their future id. The
+  Home tab and buttons stay members-only. What a prompt injection gets them: a chat with
+  the secretary on its seat (an admin stops it), nothing of the lab. When it ends their DM
+  session is reset, so as a member they start afresh. The intake must be reachable from
+  their tailnet login (a policy matter, outside the lab).
+
 - **AWS power uses a stored access key** (#68), an IAM user's, limited to start/stop on
   the lab's tagged instances plus `DescribeInstances` (docs/install.md), never the host's
   instance role: the secretary passes it to boto3 explicitly, with no default credential

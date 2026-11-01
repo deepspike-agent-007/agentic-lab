@@ -33,6 +33,7 @@ from .. import github as GH
 from .. import selfadmin as SA
 from ..worker.usage import UsageLog, probe_loop, probe_now
 from . import home as H
+from . import onboarding as O
 from . import catchup as CU
 from . import overview as OV
 from . import power as P
@@ -79,6 +80,7 @@ def sec_id_of(lab):
 class Secretary:
     """The secretary's Slack side: answers members, asks them for secrets, posts notices."""
     via = "in Slack"            # how members reach it; the console says so (#41)
+    onboardings = None          # newcomers being onboarded (onboarding.py), once serving
 
     def __init__(self, lab, latest, workers, brain, state, slack=None):
         self.lab, self.latest, self.workers = lab, latest, workers
@@ -91,6 +93,7 @@ class Secretary:
         name, _ = lab.address(sec)
         self.intake_url = f"http://{name}:{INTAKE_PORT}"
         self.intake = Intake(os.path.expanduser(STATE))     # the same store the intake serves
+        self.onboardings = O.Onboardings(f"{STATE}/onboarding.json")
 
     def ctx(self, human=None, conv=None):
         """The tools' view of the lab, for one turn on behalf of `human` (a lab member), in
@@ -804,7 +807,156 @@ class Secretary:
         await self.slack.post(channel.lstrip("#"), None, text)
         return True
 
+    # ── onboarding a newcomer (onboarding.py) ───────────────────────────────────
+
+    def onboarding_ctx(self, oid):
+        """The onboarding tools' view: this one newcomer, nothing else of the lab."""
+        def guard(fn):
+            try:
+                return fn()
+            except O.OnboardingError as e:
+                return f"refused: {e}"
+        return SimpleNamespace(
+            status=lambda: self.onboarding_status(oid),
+            answer=lambda key, value: guard(lambda: (
+                self.onboardings.answer(self.lab, oid, key, value),
+                f"recorded {key}. " + self.onboarding_status(oid))[1]),
+            confirm=lambda item: guard(lambda: (
+                self.onboardings.confirm(self.lab, oid, item),
+                f"confirmed {item}. " + self.onboarding_status(oid))[1]),
+            token=lambda: self.onboarding_secret(oid, "claude-token"),
+            key=lambda name: self.onboarding_secret(oid, f"env:{name}"),
+            save=self.state.save)
+
+    def onboarding_status(self, oid):
+        rec = self.onboardings.get(oid)
+        if rec is None:
+            return f"no onboarding {oid!r}"
+        checklist = O.items(self.lab, rec, self.intake)
+        left = [i for i in checklist if not i.done]
+        return (O.table(rec, checklist) + "\n"
+                + (f"Next: {left[0].what}" if left else "All done: the admins are told."))
+
+    async def onboarding_secret(self, oid, name):
+        """A one-time command (the Claude token) or link (a key on the checklist), by DM to
+        the newcomer: stored under the lab id they'll have, ready for their deploy."""
+        rec = self.onboardings.active().get(oid)
+        if rec is None:
+            return "this onboarding isn't active"
+        if name.startswith("env:") and name[4:] not in O.config(self.lab)["keys"]:
+            return f"refused: {name[4:]} isn't on the checklist"
+        if self.slack is None:
+            return "no Slack: an admin runs lab secret request from the console"
+        try:
+            if name == "claude-token":
+                code = self.intake.request(oid, name)
+                if not await intake_up(self.intake_url):
+                    await self.announce(":warning: the secret intake failed to start (sudo "
+                                        "journalctl -u lab-intake on the secretary host).")
+                    raise IntakeDown("the secret intake failed to start: the admins are "
+                                     "told; try again in a while")
+                text = message(rec.get("name") or oid, code, self.intake_url,
+                               until=self.intake.expires(code))
+            else:
+                link, note = await self._link(oid, name)
+                text = f"*{name[4:]}*: paste it here (never in Slack): {link}\n{note}"
+        except IntakeDown as e:
+            return str(e)
+        im = await self.slack.web.conversations_open(users=rec["slack_user"])
+        await self.slack.post(im["channel"]["id"], None, text)
+        if self.events is not None:
+            self.events.add("onboarding", f"{oid}: {name} link sent", member=oid)
+        return "sent in this DM (a separate message): tell them to use it within 5 minutes"
+
+    async def onboarding_turn(self, rec, conv, prompt):
+        """One turn of the onboarding agent for this newcomer; returns its reply."""
+        lock = self._locks.setdefault(conv.key, asyncio.Lock())
+        async with lock:
+            try:
+                return await self.brain.turn(
+                    self.onboarding_ctx(rec["id"]), conv, prompt,
+                    onboarding=(rec.get("name") or rec["id"],
+                                O.config(self.lab)["instructions"]))
+            except Exception as e:
+                log.exception("onboarding turn failed")
+                return f"Sorry, something went wrong on my side ({type(e).__name__})."
+
+    async def onboarding_tick(self):
+        """Every round: greet newcomers just started, carry on when a secret arrives (it
+        comes through the intake, not the chat), and tell the admins when one is done."""
+        if self.slack is None:
+            return
+        for oid, rec in self.onboardings.all().items():
+            if rec.get("dm") and (rec.get("finished") or rec.get("stopped")) and not rec.get(
+                    "closed"):
+                # their DM starts afresh: as a member later, not in the onboarding session
+                self.state.conversation(rec["dm"], None).session_id = None
+                self.state.save()
+                self.onboardings.update(oid, lambda r: r.__setitem__("closed", True))
+        active = self.onboardings.active()
+        for u, h in list(self.slack.members.items()):
+            if h not in self.lab.humans and h not in active:
+                del self.slack.members[u]       # a stopped or finished onboarding: not a member
+        for oid, rec in active.items():
+            self.slack.members.setdefault(rec["slack_user"], oid)
+            checklist = O.items(self.lab, rec, self.intake)
+            done = {i.id for i in checklist if i.done}
+            if rec.get("greeted") and done == set(rec.get("seen") or []) and not O.finished(
+                    checklist):
+                continue                        # nothing new: no Slack call, no write
+            if not rec.get("dm"):
+                im = await self.slack.web.conversations_open(users=rec["slack_user"])
+                rec = self.onboardings.update(
+                    oid, lambda r: r.__setitem__("dm", im["channel"]["id"]))
+            conv = self.state.conversation(rec["dm"], None)
+            arrived = [i for i in checklist if i.id in done - set(rec.get("seen") or [])
+                       and (i.id == "claude-token" or i.id.startswith("key:"))]
+            prompt = None
+            if not rec.get("greeted"):
+                prompt = ("[The onboarding just started. Greet them: who you are, that you'll "
+                          "walk them through setting up, one step at a time, about 20 minutes "
+                          "of their time; then the first step.]")
+            elif arrived:
+                prompt = ("[The lab just received: " + ", ".join(i.what for i in arrived)
+                          + ". Tell them briefly it worked, then the next step.]")
+            self.onboardings.update(oid, lambda r: (r.__setitem__("greeted", True),
+                                                    r.__setitem__("seen", sorted(done))))
+            if prompt:
+                reply = await self.onboarding_turn(rec, conv, prompt)
+                if reply and reply.strip() != SILENT:
+                    await self.slack.post(conv.channel, None, reply)
+            if O.finished(checklist):
+                rec = self.onboardings.update(
+                    oid, lambda r: r.__setitem__("finished", O._now()))
+                await self.tell_admins(
+                    f":white_check_mark: *{rec.get('name') or oid}* finished onboarding "
+                    f"(lab id `{oid}`):\n```{O.table(rec, checklist)}```\nNext, for the "
+                    f"admins: add them to lab.yaml, their machines and their manager's Slack "
+                    f"app. Console: `lab onboarding status {oid}`.")
+                if self.events is not None:
+                    self.events.add("onboarding", f"{oid}: finished", member=oid)
+
+    async def tell_admins(self, text):
+        """A DM to every admin with a Slack user."""
+        for hid, h in self.lab.humans.items():
+            if (h or {}).get("admin") and (h or {}).get("slack_user") and self.slack:
+                im = await self.slack.web.conversations_open(users=h["slack_user"])
+                await self.slack.post(im["channel"]["id"], None, text)
+
     async def on_message(self, msg):
+        rec = self.onboardings.active().get(msg.human) if self.onboardings else None
+        if rec is not None and rec.get("slack_user") == msg.user:
+            if not msg.private:
+                reply = "Let's carry on in our DM :slightly_smiling_face:"
+                if self.slack is not None:
+                    await self.slack.post(msg.channel, msg.thread_ts, reply)
+                return reply
+            conv = self.state.conversation(msg.channel, msg.thread_ts)
+            name = rec.get("name") or rec["id"]
+            reply = await self.onboarding_turn(rec, conv, f"[{name}]: {msg.text}")
+            if self.slack is not None:
+                await self.slack.post(conv.channel, conv.thread_ts, reply)
+            return reply
         conv = self.state.conversation(msg.channel, msg.thread_ts)
         lock = self._locks.setdefault(conv.key, asyncio.Lock())
         who = (self.lab.humans.get(msg.human) or {}).get("name") or msg.human
@@ -1188,7 +1340,21 @@ async def serve(lab_path, host, port):
             except asyncio.TimeoutError:
                 pass
 
+    async def onboarding_loop():
+        """Newcomers being onboarded (onboarding.py): its own loop, since a greeting is an
+        agent's turn and mustn't hold up collecting the lab's state."""
+        while not stop.is_set():
+            try:
+                await sec.onboarding_tick()
+            except Exception:
+                log.exception("onboarding failed")
+            try:
+                await asyncio.wait_for(stop.wait(), COLLECT_EVERY_S)
+            except asyncio.TimeoutError:
+                pass
+
     tasks = [asyncio.create_task(collector()), asyncio.create_task(notice_loop()),
+             asyncio.create_task(onboarding_loop()),
              asyncio.create_task(probe_loop(usage, seat, stop)),
              asyncio.create_task(apply_watch())]
     GH.env_for(lab, sec_id, root=GH.SERVICE_ROOT)   # its GitHub identity's git setup, if any

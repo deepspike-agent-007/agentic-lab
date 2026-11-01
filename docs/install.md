@@ -301,6 +301,12 @@ doesn't work in runs and the workaround for each.
   `lab.yaml` turns this off.
 - **Add a member:** their name and Slack member ID → PR → merge → deploy; the secretary
   then DMs them their Claude-token command.
+- **Onboard a newcomer first** (optional, DESIGN.md §4.5): once they're in Slack and on the
+  tailnet's user list, `sudo -u lab-secretary lab onboarding start <id> --slack U…
+  --name "Full Name"`. The secretary guides them in a DM through what they can do alone
+  (answers, Claude token, keys, the lab's own steps; set in lab.yaml's `onboarding:`) and
+  DMs the admins what it collected when they're done; `lab onboarding status` meanwhile.
+  Their tailnet login must reach the intake (port 8771) before they're in lab.yaml.
 - **Who talks to which manager:** every member may talk to any manager. A *dedicated*
   manager (`access: dedicated`, the default) does real work only for its own member;
   others are guests there: questions and discussion, no tasks, no tools. A *shared* manager

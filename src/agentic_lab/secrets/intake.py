@@ -314,6 +314,13 @@ class Intake:
         _write_private(self._secret_path(human, name) + ".meta",
                        json.dumps({"received": _now().isoformat(timespec="seconds")}))
 
+    def has(self, owner, name):
+        """Is secret `name` of `owner` stored? (Never reads the value.)"""
+        try:
+            return os.path.exists(self._secret_path(owner, name))
+        except IntakeError:
+            return False
+
     def member_env(self, human):
         """A member's own keys: {NAME: value} (member_env.py)."""
         from ..member_env import load_dir

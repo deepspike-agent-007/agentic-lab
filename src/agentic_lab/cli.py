@@ -7,6 +7,10 @@
     lab secret request <human> <name> --url URL
                                 ask a human for a secret: prints the message to send them
     lab intake serve            the secretary's endpoint where members' clients send secrets
+    lab onboarding start <id> --slack U… --name "Full Name"
+                                (as the secretary's user) the secretary DMs a newcomer and
+                                guides them through what they can do on their own
+    lab onboarding status [id] | stop <id>
     lab broker serve            the approval broker (on the secretary host, as lab-broker)
     lab secretary serve         the secretary's service: lab state, web UI, Slack
     lab secretary ask --as <member> "message"
@@ -147,6 +151,40 @@ def cmd_secret_request(args):
     else:
         name = (lab.humans[owner] or {}).get("name", owner)
         print(message(name, code, args.url, args.name, until=intake.expires(code)))
+    return 0
+
+
+def cmd_onboarding(args):
+    import os
+
+    from .secretary import onboarding as O
+    from .secrets.intake import Intake
+    lab = _load_lab(args.lab)
+    store = O.Onboardings(os.path.join(args.state, "onboarding.json"))
+    intake = Intake(os.path.expanduser(args.state))
+    try:
+        if args.ocmd == "start":
+            store.start(lab, args.id, args.slack, args.name,
+                        os.environ.get("SUDO_USER") or os.environ.get("USER") or "console")
+            print(f"started: the secretary DMs {args.name} within a minute.")
+            print(f"Follow it: lab onboarding status {args.id}. The admins are told in Slack "
+                  "when it's finished.")
+        elif args.ocmd == "stop":
+            store.stop(args.id)
+            print(f"stopped {args.id}: the secretary no longer talks to them as a newcomer "
+                  "(their stored secrets stay).")
+        else:
+            recs = store.all()
+            if args.id:
+                if args.id not in recs:
+                    sys.exit(f"lab: no onboarding {args.id!r}")
+                recs = {args.id: recs[args.id]}
+            if not recs:
+                print("no onboardings")
+            for rec in recs.values():
+                print(O.table(rec, O.items(lab, rec, intake)))
+    except O.OnboardingError as e:
+        sys.exit(f"lab: {e}")
     return 0
 
 
@@ -743,6 +781,21 @@ def main(argv=None):
                     "e.g. http://secretary.example.ts.net:8771")
     sr.add_argument("--state", default=STATE)
     sr.set_defaults(fn=cmd_secret_request)
+
+    ob = sub.add_parser("onboarding", help="the secretary guides a newcomer (as the "
+                        "secretary's user: sudo -u lab-secretary lab onboarding ...)")
+    osub = ob.add_subparsers(dest="ocmd", required=True)
+    ost = osub.add_parser("start", help="start onboarding a newcomer in a Slack DM")
+    ost.add_argument("id", help="the lab id they'll have in lab.yaml (e.g. their first name)")
+    ost.add_argument("--slack", required=True, help="their Slack member ID (U…)")
+    ost.add_argument("--name", required=True, help="their full name")
+    oss = osub.add_parser("status", help="the checklist of one onboarding, or all")
+    oss.add_argument("id", nargs="?")
+    osp = osub.add_parser("stop", help="stop an onboarding")
+    osp.add_argument("id")
+    for p_ in (ost, oss, osp):
+        p_.add_argument("--state", default=os.path.expanduser(STATE))
+        p_.set_defaults(fn=cmd_onboarding)
 
     it = sub.add_parser("intake", help="the secret intake endpoint")
     isub = it.add_subparsers(dest="icmd", required=True)

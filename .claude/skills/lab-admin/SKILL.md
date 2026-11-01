@@ -88,6 +88,10 @@ Every recipe is a `lab.yaml` change through the PR flow above, then a deploy, wh
 or updates users, secrets and services on every host.
 - **Add a member:** name, Slack member ID (ask) → PR → merge → deploy → their Claude token
   (`lab secret request <member> claude-token`, or the secretary DMs them).
+- **Onboard a newcomer** (before adding them): `sudo -u lab-secretary lab onboarding start
+  <id> --slack U… --name "…"`; the secretary collects their answers (GitHub username,
+  manager name, SSH key), Claude token and keys in a DM, and DMs the admins when done.
+  `lab onboarding status <id>` shows the checklist; use its answers for the member's PR.
 - **Add an agent:** its name (ask), role, `human:` (whose seat), `host:` (managers run on
   any host), `access`, grants → PR → merge → deploy. A manager then needs its Slack app
   (install step 7) and one more deploy; a GPU host must exist, be on the tailnet and give

@@ -27,6 +27,10 @@ TOOL_NAMES = ("lab_state", "worker_tasks", "task_result", "ask_member_for_claude
               "redraw_app_icon", "request_github_app", "check_github_app",
               "approval_timeout", "member_secret")
 LAB_TOOLS = tuple(f"mcp__lab__{n}" for n in TOOL_NAMES)
+# a newcomer being onboarded (onboarding.py) gets these and nothing else
+ONBOARDING_NAMES = ("onboarding_status", "onboarding_answer", "onboarding_confirm",
+                    "send_claude_token_command", "send_key_link")
+ONBOARDING_TOOLS = tuple(f"mcp__onboarding__{n}" for n in ONBOARDING_NAMES)
 
 
 def system_prompt(name, lab_name):
@@ -93,6 +97,82 @@ agents. You keep the lab running and answer questions about it, in Slack.
   exactly <silent> and nothing else.
 - Write for Slack: short, plain, *bold* for emphasis, no headings or tables.
 """
+
+
+def onboarding_prompt(name, lab_name, newcomer, instructions):
+    lab_part = (f"\nThe lab's own instructions for onboarding (from its admins; follow "
+                f"them):\n\n{instructions}\n") if instructions else ""
+    return f"""
+You are {name}, the secretary of the agentic lab "{lab_name}". You are onboarding a newcomer,
+{newcomer}, in a Slack DM: guiding them through what they can do on their own before the
+admins set up their agents. You talk to no one else in this conversation.
+
+- Your checklist: onboarding_status. It's computed from what's stored, never from memory:
+  call it at the start of every turn, and work on the first item not done. When every item
+  is done, tell them they're finished and that the admins (who are told automatically) set
+  up their agents and machines next and will be in touch.
+- One step per message: one action, plain words, no jargon, nothing they don't need yet.
+  Explain why only when it helps. They may be new to all of this: be patient and warm.
+- Answers (onboarding_answer): ask for one thing at a time, record what they give you; if
+  it's refused, explain kindly what's wrong. Suggest names for their manager if they want
+  ideas (short, one word, e.g. DeepStar).
+- Their Claude token: first make sure they have, on their own computer, Claude Code
+  installed and logged in with their Claude seat, python3, and Tailscale installed and
+  logged in to the lab's tailnet. Then send_claude_token_command: a one-time command
+  (active 5 minutes) they run in a terminal on that computer; it hands the token straight to
+  the lab. If it fails, ask what it printed; a new command is fine any time.
+- Their keys (send_key_link): what each key is and where they get it is in the lab's
+  instructions below. They paste the value into the one-time link (active 5 minutes),
+  never in Slack.
+- The admins' own items (onboarding_confirm): ask them to do it, and confirm only when they
+  say it's done.
+- Secrets never go into Slack. If they paste a token, key or password here, don't repeat
+  it: tell them to revoke it and make a new one, then use the link. An SSH PUBLIC key is
+  fine in Slack; a private key never is.
+- You only onboard. Questions about the lab, research or anything else: they can ask once
+  they're set up; you don't have the tools for it now. Never promise anything the admins
+  haven't decided (machines, GPUs, access, dates).
+- Write for Slack: short, plain, *bold* for emphasis, no headings or tables.
+{lab_part}"""
+
+
+def build_onboarding_tools(ctx):
+    """`ctx`: status() -> text, answer(key, value), confirm(item), token(), key(name): each
+    -> text. Bound to one newcomer: nothing here reaches the rest of the lab."""
+
+    def text(s):
+        return {"content": [{"type": "text", "text": s}]}
+
+    @tool("onboarding_status", "The newcomer's checklist, computed now: what's done, what's "
+          "left, and what each answer is.", {})
+    async def status(args):
+        return text(ctx.status())
+
+    @tool("onboarding_answer", "Record one of the newcomer's answers (checked first: a "
+          "refusal says what's wrong). `key`: one of the checklist's questions (github, "
+          "manager_name, ssh_key).", {"key": str, "value": str})
+    async def answer(args):
+        return text(ctx.answer(args["key"], args["value"]))
+
+    @tool("onboarding_confirm", "Mark one of the admins' own items done, after the newcomer "
+          "said they did it. `item`: its id (the part after 'item:' in the checklist).",
+          {"item": str})
+    async def confirm(args):
+        return text(ctx.confirm(args["item"]))
+
+    @tool("send_claude_token_command", "DM the newcomer a one-time command (active 5 "
+          "minutes) that hands their Claude token to the lab. Only once they have Claude "
+          "Code, python3 and Tailscale working.", {})
+    async def token(args):
+        return text(await ctx.token())
+
+    @tool("send_key_link", "DM the newcomer a one-time link (active 5 minutes) for one of "
+          "the keys on their checklist. `name`: the key's name as on the checklist.",
+          {"name": str})
+    async def key(args):
+        return text(await ctx.key(args["name"]))
+
+    return create_sdk_mcp_server("onboarding", tools=[status, answer, confirm, token, key])
 
 
 def build_tools(ctx):
@@ -282,23 +362,38 @@ class SecretaryBrain:
         self.events = events
         self.usage = usage          # a UsageLog: the secretary's own tokens and limit readings
 
-    async def turn(self, ctx, conv, prompt):
+    def options(self, ctx, conv, can_use_tool, onboarding=None):
+        """The session's options. `onboarding`: (newcomer's name, the lab's instructions):
+        a newcomer's DM, with the onboarding tools only, no built-in tools at all."""
+        if onboarding is None:
+            servers, tools, extra = {"lab": build_tools(ctx)}, LAB_TOOLS, {}
+            append = system_prompt(self.name, self.lab_name)
+        else:
+            servers, tools = {"onboarding": build_onboarding_tools(ctx)}, ONBOARDING_TOOLS
+            extra = {"tools": []}       # no Read, Bash, web...: only its own tools
+            append = onboarding_prompt(self.name, self.lab_name, *onboarding)
+        return ClaudeAgentOptions(
+            cwd=self.workdir, settings=json.dumps(self.settings), setting_sources=[],
+            permission_mode="default", can_use_tool=can_use_tool,
+            mcp_servers=servers, allowed_tools=list(tools),
+            system_prompt={"type": "preset", "preset": "claude_code", "append": append},
+            model=self.model, env=self.env, resume=conv.session_id, **extra)
+
+    async def turn(self, ctx, conv, prompt, onboarding=None):
         log = (lambda kind, text="", **m: self.events.add(kind, text, conv=conv.key, **m)
                ) if self.events is not None else (lambda *a, **k: None)
         log("message", prompt)
         async def can_use_tool(tool_name, tool_input, context):
+            if onboarding is not None:
+                if tool_name in ONBOARDING_TOOLS:
+                    return PermissionResultAllow()
+                return PermissionResultDeny(message="Onboarding: only the onboarding tools.")
             if tool_name in LAB_TOOLS or allowed_without_asking(tool_name, tool_input):
                 return PermissionResultAllow()
             return PermissionResultDeny(message=(
                 "The secretary works inside its sandbox only; it has no approvals."))
 
-        options = ClaudeAgentOptions(
-            cwd=self.workdir, settings=json.dumps(self.settings), setting_sources=[],
-            permission_mode="default", can_use_tool=can_use_tool,
-            mcp_servers={"lab": build_tools(ctx)}, allowed_tools=list(LAB_TOOLS),
-            system_prompt={"type": "preset", "preset": "claude_code",
-                           "append": system_prompt(self.name, self.lab_name)},
-            model=self.model, env=self.env, resume=conv.session_id)
+        options = self.options(ctx, conv, can_use_tool, onboarding)
         reply, last = None, None
         # a Claude Code start-up per message (#69): measured, however the turn ends
         async with TurnClock(log) as clock, ClaudeSDKClient(options) as client:

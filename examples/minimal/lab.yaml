@@ -77,6 +77,15 @@ github:
   accounts:
     flash-bot: {expires: 2027-10-01}     # its token's expiry, for reminders
 
+# Optional: how the secretary onboards a newcomer (lab onboarding start, DESIGN.md §4.5)
+onboarding:
+  ask: [github, manager_name]           # also: ssh_key, for a shell on their machines
+  keys: [WANDB_API_KEY]                 # their own keys, asked for by one-time link
+  items:                                # the lab's own steps, confirmed by the newcomer
+    - {id: read-guide, text: "Read the lab's guide for newcomers"}
+  instructions: |
+    W&B key: wandb.ai → your profile → User settings → API keys → New key.
+
 credentials:
   - {name: slack/mgr-alice, host: mgr-vm-01, agent: mgr-alice, expires: null}
   - {name: claude/alice-seat-token, host: gpu-a, expires: 2027-10-01}

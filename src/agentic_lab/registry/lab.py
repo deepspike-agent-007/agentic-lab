@@ -55,6 +55,8 @@ _TOP = {"lab": (str, True), "tailnet": (str, False), "trust_tailnet": (bool, Fal
         "humans": (dict, True),
         "agents": (dict, True), "hosts": (dict, True), "credentials": (list, False),
         "github": (dict, False),            # the agents' GitHub bot accounts
+        # how the secretary guides a newcomer (secretary/onboarding.py)
+        "onboarding": (dict, False),
         # a host that missed a deploy is brought up to date when it's back (#61)
         "auto_catch_up": (bool, False),
         # what members see of each other's work: "private" (default) or "team" (#62)
@@ -274,6 +276,11 @@ def check(lab: Lab, today: dt.date | None = None):
                 E(cw, "timeout_s must be positive")
             if ch.get("on_timeout", "deny") != "deny":
                 E(cw, "on_timeout must be 'deny' (a timeout never approves)")
+
+    if "onboarding" in lab.data:
+        from ..secretary.onboarding import check_config
+        for where, msg in check_config(lab.data["onboarding"]):
+            E(where, msg)
 
     if lab.data.get("visibility", "private") not in ("private", "team"):
         E("visibility", "must be private (the default: members see the lab, not each "
