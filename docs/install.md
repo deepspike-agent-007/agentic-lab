@@ -206,6 +206,13 @@ admin says so explicitly in the chat: "yes, run sudo lab apply". That's expected
      `lab apply` and the secretary's deploys hang. Either give the admin an *accept* rule
      in the tailnet's SSH policy, or leave Tailscale SSH off on lab hosts and use OpenSSH
      (key-only) over the tailnet.
+   - **Let the deploy know the host's key.** Deploys ssh with `BatchMode=yes` and refuse an
+     unknown host key, so once, as the admin on the secretary's host, `ssh
+     <admin>@<tailnet_name> true` and check the key it shows (e.g. against `ssh-keyscan`
+     over the cloud's private network, or the VM's console). A host that missed its first
+     deploy gets it from the next catch-up.
+   - **A worker without a GPU** (a CPU VM): set `gpu: false` on its agent, so its sandbox
+     doesn't look for one and `lab doctor` doesn't report a missing GPU.
    - **Turn off what the image runs but the lab doesn't need.** Cloud GPU images may run
      services on all interfaces (e.g. `rpcbind` on port 111); sandboxed agents can reach
      every tailnet host, so disable them (`sudo systemctl disable --now rpcbind

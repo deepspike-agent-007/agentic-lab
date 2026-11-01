@@ -354,6 +354,8 @@ def deploy(lab_path, info, source, admin, hosts=None, allow_missing=False, self_
                 if cur.get("member_env") == p.get("member_env"):
                     said, why = "current", "up to date"
                 # else: the same commits, other member keys: deployed (member_env.py)
+            elif not cur.get("config_commit"):
+                pass        # never deployed (a new host, off or unreachable at its first deploy)
             elif cur.get("unreviewed") or not only_behind(cur.get("config_commit")):
                 said, why = "ahead", "runs a newer or unreviewed commit: left alone"
             if said:

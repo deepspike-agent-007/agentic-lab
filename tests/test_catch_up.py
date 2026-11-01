@@ -199,18 +199,21 @@ def test_a_catch_up_deploys_only_older_hosts(monkeypatch, capsys):
     monkeypatch.setattr(A, "describe", lambda p: p["host"])
     monkeypatch.setattr(A, "has_work", lambda p: True)
     plans.append({"host": "gpu-c", "name": "gpu-c", "missing": [], "units": [1]})
+    plans.append({"host": "gpu-new", "name": "gpu-new", "missing": [], "units": [1]})
     runs = {"gpu-a": NEW, "gpu-b": OLD, "gpu-c": NEWER}
     monkeypatch.setattr(A, "applied_on", lambda p, local, admin: {
-        "config_commit": runs[p["host"]], "framework_commit": FW})
+        "config_commit": runs[p["host"]], "framework_commit": FW} if p["host"] in runs
+        else {})                                            # never deployed
     monkeypatch.setattr(A, "run_bundle", lambda p, local, admin: shipped.append(
         (p["host"], p.get("catch_up"))) or 0)
     monkeypatch.setattr(cli, "deploy_lock", lambda: None)
     older = lambda old: old == OLD                          # noqa: E731
     assert cli.deploy("lab.yaml", {"config_commit": NEW}, ".", "admin", only_behind=older) == 0
-    assert shipped == [("gpu-b", True)]       # not the current one, never the newer one
+    # not the current one, never the newer one; a host that never got a deploy gets one
+    assert shipped == [("gpu-b", True), ("gpu-new", True)]
     out = capsys.readouterr().out
     assert "CATCH-UP gpu-a current" in out and "CATCH-UP gpu-c ahead" in out \
-        and "CATCH-UP gpu-b done" in out
+        and "CATCH-UP gpu-b done" in out and "CATCH-UP gpu-new done" in out
 
 
 def test_the_host_checks_for_active_work_itself(tmp_path):
