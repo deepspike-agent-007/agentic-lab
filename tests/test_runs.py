@@ -271,6 +271,18 @@ def test_warm_environments(tmp_path, monkeypatch):
     assert runner._disk_note() == ""
 
 
+def test_the_worker_is_told_to_ask_again_for_each_refused_host(tmp_path):
+    """A program that needs several hosts reveals them one at a time, and many hang on a
+    refused one: the worker gives network commands a timeout and asks again for each new
+    host, instead of finishing the task as blocked after the first approval."""
+    from agentic_lab.worker import runner as RN
+    t = T.TaskStore(tmp_path).submit("x", "alice", "mgr")
+    prompt = " ".join(RN._system_prompt("worker-a", t).split())
+    assert "give network commands a timeout" in prompt
+    assert "a refusal for another host means asking again" in prompt
+    assert "Only if that is denied or times out, say what you need in finish_task" in prompt
+
+
 def test_keep_free_gb_is_for_workers(tmp_path):
     import yaml
     d = yaml.safe_load(EXAMPLE.read_text())

@@ -129,7 +129,13 @@ How you work here:
   a human approved it. A human may also widen your sandbox for a while instead.
 - Your sandbox and permissions are managed by the lab, not by you: don't suggest
   /sandbox, settings files or permission rules. To get more access, ask through the
-  lab (retry outside the sandbox) or say what you need in finish_task.
+  lab: retry outside the sandbox. Only if that is denied or times out, say what you need
+  in finish_task.
+- Many programs (uploaders, SDKs, installers) retry a refused connection forever instead
+  of failing: give network commands a timeout (`timeout 120 ...`), so a refusal shows up
+  in minutes. A program may need several hosts and reveal them one at a time: a widened
+  sandbox covers only the hosts seen so far, so a refusal for another host means asking
+  again (retry outside the sandbox), not giving up.
 - Report progress with the report_progress tool at meaningful steps (a few per task, not
   every command).
 - When the task is done (or can't be done), call finish_task exactly once: a summary for
@@ -444,7 +450,8 @@ class SdkRunner:
                           "; ".join(_grant_line(g) for g in session["restart_for"]) +
                           ". (Your session was restarted to apply it; that's why the action "
                           "showed as not run.) Retry what you were doing, inside the sandbox "
-                          "(without dangerouslyDisableSandbox).")
+                          "(without dangerouslyDisableSandbox). If it's then refused for "
+                          "another host, ask again: retry outside the sandbox.")
                 restarts += 1
                 if restarts <= MAX_SESSION_RESTARTS:
                     continue
