@@ -311,8 +311,9 @@ stays with the admins and their tools.
   secret arrives through the intake (not the chat), the secretary carries on by itself.
 - **A newcomer's session is narrow**: only the onboarding tools (their own checklist,
   answers, one-time links for their own token and the checklist's keys), no built-in tools,
-  no lab state; the deployed layout isn't in their prompts. It ends when the onboarding
-  finishes or an admin stops it (`lab onboarding stop <id>`): until they're in lab.yaml
+  no lab state; the deployed layout isn't in their prompts. **Until it finishes, that's all
+  they get**, even if they're added to lab.yaml midway: no member chat, no Home tab. It ends
+  when the onboarding finishes or an admin stops it (`lab onboarding stop <id>`): until they're in lab.yaml
   the secretary then treats them as anyone outside the lab.
 
 ---

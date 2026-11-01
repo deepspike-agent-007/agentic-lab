@@ -254,6 +254,30 @@ def test_a_stopped_onboarding_no_longer_reaches_the_secretary(tmp_path):
     assert convs["D-U0DANA001"].session_id is None      # as a member later: a fresh session
 
 
+def test_until_it_finishes_a_newcomer_already_in_lab_yaml_gets_only_the_onboarding(tmp_path):
+    """Added to lab.yaml midway (the admins were quick): still the onboarding agent, never
+    the member's tools, the lab's layout or the Home tab, until it finishes."""
+    sec = secretary(tmp_path)
+    sec.onboardings.start(sec.lab, "dana", "U0DANA001", "Dana", "alice")
+    sec.lab.humans["dana"] = {"name": "Dana", "slack_user": "U0DANA001"}
+    sec.slack.members["U0DANA001"] = "dana"
+    published = []
+
+    async def views_publish(**kw):
+        published.append(kw)
+    sec.slack.web.views_publish = views_publish
+    sec.home_viewers, sec.latest, sec.workers = set(), {"state": {}}, None
+    asyncio.run(sec.publish_home("U0DANA001"))
+    assert published == [] and not sec.home_viewers
+    asyncio.run(sec.on_message(Incoming("D-U0DANA001", None, "1", "U0DANA001", "dana",
+                                        "show me the lab", True, True)))
+    assert sec.turns[-1][1] is not None and "lab, as deployed" not in sec.turns[-1][0]
+    sec.onboardings.stop("dana")                        # over: a member like any other
+    asyncio.run(sec.on_message(Incoming("D-U0DANA001", None, "2", "U0DANA001", "dana",
+                                        "show me the lab", True, True)))
+    assert sec.turns[-1][1] is None and sec.turns[-1][0].startswith("[lab, as deployed")
+
+
 # ── the console ──────────────────────────────────────────────────────────────
 
 def test_the_console_starts_and_shows_an_onboarding(tmp_path):

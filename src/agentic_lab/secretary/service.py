@@ -984,6 +984,8 @@ class Secretary:
                          if (x or {}).get("slack_user") == slack_user), None)
         if human_id is None:
             return
+        if self.onboardings and human_id in self.onboardings.active():
+            return                      # being onboarded: nothing of the lab until it's done
         self.home_viewers.add(slack_user)
         admin = bool((self.lab.humans[human_id] or {}).get("admin"))
         try:
