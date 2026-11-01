@@ -148,14 +148,15 @@ class Item:
     detail: str = ""
 
 
-def items(lab, rec, intake):
+def items(lab, rec, intake, full=False):
     """The checklist of one onboarding, computed now. Everything on it is the newcomer's to
-    do; none of it waits for an admin."""
+    do; none of it waits for an admin. `full`: answers as given (the console, for the
+    member's PR), not shortened."""
     c, out = config(lab), []
     for a in c["ask"]:
         v = (rec.get("answers") or {}).get(a)
         out.append(Item(f"answer:{a}", ANSWERS[a][0].upper() + ANSWERS[a][1:], bool(v),
-                        shown(a, v) or ""))
+                        (v if full else shown(a, v)) or ""))
     out.append(Item("claude-token", "Their Claude token, stored and checked with Anthropic "
                     "(this also shows Tailscale and Claude Code work on their computer)",
                     intake.has(rec["id"], "claude-token")))
@@ -180,7 +181,9 @@ def table(rec, checklist):
         head += f", finished {rec['finished']}"
     lines = [head]
     for i in checklist:
-        lines.append(f"  [{'x' if i.done else ' '}] {i.what}" + (f": {i.detail}" if i.detail else ""))
+        how = f" (onboarding_confirm: {i.id[5:]})" if i.id.startswith("item:") else ""
+        lines.append(f"  [{'x' if i.done else ' '}] {i.what}{how}"
+                     + (f": {i.detail}" if i.detail else ""))
     return "\n".join(lines)
 
 

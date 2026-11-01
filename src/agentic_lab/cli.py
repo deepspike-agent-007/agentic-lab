@@ -182,7 +182,7 @@ def cmd_onboarding(args):
             if not recs:
                 print("no onboardings")
             for rec in recs.values():
-                print(O.table(rec, O.items(lab, rec, intake)))
+                print(O.table(rec, O.items(lab, rec, intake, full=True)))
     except O.OnboardingError as e:
         sys.exit(f"lab: {e}")
     return 0

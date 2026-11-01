@@ -132,7 +132,7 @@ def test_the_checklist_comes_from_whats_stored_and_says_when_its_finished(tmp_pa
     checklist = O.items(lb, st.get("dana"), intake)
     assert O.finished(checklist)
     text = O.table(st.get("dana"), checklist)
-    assert "[x] Their Claude token" in text and "sk-ant" not in text and "DeepTruth" in text
+    assert "[x] Their Claude token" in text and "(onboarding_confirm: read-guide)" in text and "sk-ant" not in text and "DeepTruth" in text
 
 
 # ── the agent ────────────────────────────────────────────────────────────────
@@ -258,7 +258,7 @@ def test_a_stopped_onboarding_no_longer_reaches_the_secretary(tmp_path):
 
 def test_the_console_starts_and_shows_an_onboarding(tmp_path):
     lab_path = tmp_path / "lab.yaml"
-    lab_path.write_text(EXAMPLE.read_text() + "\nonboarding:\n  keys: [WANDB_TEAM_API_KEY]\n")
+    lab_path.write_text(EXAMPLE.read_text() + "\nonboarding:\n  ask: [ssh_key]\n  keys: [WANDB_TEAM_API_KEY]\n")
     run = lambda *a: subprocess.run(  # noqa: E731
         [sys.executable, "-m", "agentic_lab.cli", "--lab", str(lab_path), "onboarding", *a,
          "--state", str(tmp_path)], capture_output=True, text=True)
@@ -267,4 +267,72 @@ def test_the_console_starts_and_shows_an_onboarding(tmp_path):
     out = run("status", "dana")
     assert "[ ] Their key WANDB_TEAM_API_KEY" in out.stdout and "Dana Scully" in out.stdout
     assert run("start", "dana", "--slack", "U0DANA001", "--name", "D").returncode == 1
+    O.Onboardings(tmp_path / "onboarding.json").update(
+        "dana", lambda r: r["answers"].__setitem__("ssh_key", PUB))
+    assert PUB in run("status").stdout                 # whole, for the member's PR
     assert json.loads((tmp_path / "onboarding.json").read_text())["dana"]["started_by"]
+
+
+# ── end to end, through the real intake ──────────────────────────────────────
+
+def test_a_newcomers_secrets_arrive_through_the_intake_before_they_are_in_lab_yaml(
+        tmp_path, monkeypatch, free_port):
+    """The token command and the key link the secretary DMs work against the real intake
+    for an id that isn't in lab.yaml yet; the loop then carries on, and the admins hear."""
+    import importlib.util
+    import re
+    import threading
+    import time
+
+    import httpx2
+    import uvicorn
+
+    from agentic_lab.secretary import service as S
+    from agentic_lab.secrets.server import app
+    root = Path(__file__).parent.parent
+
+    async def up(url, wait_s=15):
+        return True
+    monkeypatch.setattr(S, "intake_up", up)
+    sec = secretary(tmp_path)
+    url = f"http://127.0.0.1:{free_port}"
+    sec.intake_url = url
+    lb = sec.lab
+    assert "dana" not in lb.humans
+    sec.onboardings.start(lb, "dana", "U0DANA001", "Dana", "alice")
+    asyncio.run(sec.onboarding_tick())                          # the greeting
+    server = uvicorn.Server(uvicorn.Config(app(sec.intake, root / "client" / "lab-member.py"),
+                                           host="127.0.0.1", port=free_port, log_level="error"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    while not server.started:
+        time.sleep(0.02)
+    try:
+        ctx = sec.onboarding_ctx("dana")
+        asyncio.run(ctx.token())
+        dm = sec.slack.posts[-1][1]
+        code = re.search(r"--code ([A-Z2-9]{4}-[A-Z2-9]{4})", dm).group(1)
+        spec = importlib.util.spec_from_file_location("lab_member",
+                                                      root / "client" / "lab-member.py")
+        client = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client)
+        monkeypatch.setattr(client.getpass, "getpass", lambda prompt: "sk-ant-oat01-" + "x" * 60)
+        client.main(["claude-token", "--paste", "--code", code, "--to", url])
+        asyncio.run(sec.onboarding_tick())
+        assert "Claude token" in sec.turns[-1][0]               # carried on by itself
+
+        asyncio.run(ctx.key("WANDB_TEAM_API_KEY"))
+        link = re.search(r"(http://\S+)", sec.slack.posts[-1][1]).group(1)
+        r = httpx2.post(link, data={"value": "w" * 40})
+        assert "Stored" in r.text
+        assert sec.intake.member_env("dana") == {"WANDB_TEAM_API_KEY": "w" * 40}
+    finally:
+        server.should_exit = True
+        th.join()
+    for k, v in (("github", "dana"), ("manager_name", "DeepTruth"), ("ssh_key", PUB)):
+        sec.onboardings.answer(lb, "dana", k, v, lambda u: True)
+    sec.onboardings.confirm(lb, "dana", "read-guide")
+    asyncio.run(sec.onboarding_tick())
+    told = [t for c, t in sec.slack.posts if c == "D-U00000001"]
+    assert len(told) == 1 and "[x] Their key WANDB_TEAM_API_KEY" in told[0]
+    assert "w" * 40 not in told[0] and "sk-ant" not in told[0]
