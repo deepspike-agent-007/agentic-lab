@@ -77,7 +77,9 @@ github:
   accounts:
     flash-bot: {expires: 2027-10-01}     # its token's expiry, for reminders
 
-# Optional: how the secretary onboards a newcomer (lab onboarding start, DESIGN.md §4.5)
+# Optional: how the secretary onboards a newcomer (lab onboarding start, DESIGN.md §4.5).
+# Their Claude token is always on the checklist (every agent runs on its member's seat);
+# this section adds what varies from lab to lab.
 onboarding:
   ask: [github, manager_name]           # also: ssh_key, for a shell on their machines
   keys: [WANDB_API_KEY]                 # their own keys, asked for by one-time link
