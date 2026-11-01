@@ -305,9 +305,10 @@ def http_app(mcp: MCPServer, access: Access, allowed_hosts=None):
 
 
 def default_health(agent_id, store):
-    counts = {}
+    counts, last = {}, None
     for t in store.all():
         counts[t.state] = counts.get(t.state, 0) + 1
+        last = max([x for x in (last, t.started, t.finished) if x], default=None)
     gpu, gpus, procs = None, None, None
     if shutil.which("nvidia-smi"):
         try:
@@ -322,7 +323,10 @@ def default_health(agent_id, store):
     disk = shutil.disk_usage(os.path.expanduser("~"))
     return {"agent": agent_id, "host": platform.node(), "tasks": counts, "gpu": gpu,
             "gpus": gpus, "gpu_processes": procs, "disk_free_gb": round(disk.free / 1e9, 1),
-            "keep_awake": keep_awake()}
+            "keep_awake": keep_awake(),
+            # when its latest task started or ended: the secretary checks a worker's queue
+            # only every few minutes, and a short task between two looks still counts
+            "activity": {"last_turn_at": last}}
 
 
 KEEP_AWAKE = "/var/lib/agentic-lab/keep-awake"

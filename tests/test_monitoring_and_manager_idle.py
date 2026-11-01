@@ -227,3 +227,50 @@ def test_idle_counts_from_the_end_of_the_last_turn():
         MS._now = orig
     assert seen == ["2026-10-23T12:00:00+00:00"]
     assert mgr.last_turn_at == "2026-10-23T12:04:30+00:00"   # and again when it ended
+
+
+# ── a worker's short tasks between two looks ─────────────────────────────────
+
+def test_a_short_task_between_two_looks_restarts_a_workers_idle_clock():
+    """The secretary looks at a worker's queue only every few minutes: a task that started
+    and ended between two looks never shows as busy, so the clock goes by the worker's
+    latest task instead (its health's activity)."""
+    lb = registry.load(EXAMPLE)
+    w = next(a for a, x in lb.agents.items() if x.get("role") == "worker")
+    host = lb.agents[w]["host"]
+    lb.hosts[host]["idle_stop_min"] = 30
+    idle = {"up": True, "queue": {"done": 1}, "activity": {"last_turn_at": None}}
+    ran = {**idle, "activity": {"last_turn_at": (T0 + dt.timedelta(minutes=20)).isoformat()}}
+    watch = P.IdleWatch()
+    watch.candidates(lb, {"agents": {w: idle}}, now=T0)
+    assert host not in watch.candidates(lb, {"agents": {w: ran}}, now=T0 + dt.timedelta(minutes=31))
+    assert host in watch.candidates(lb, {"agents": {w: ran}}, now=T0 + dt.timedelta(minutes=51))
+
+
+def test_a_workers_health_says_when_its_latest_task_started_or_ended(tmp_path):
+    from agentic_lab.worker import server as S
+    from agentic_lab.worker import tasks as T
+    store = T.TaskStore(tmp_path)
+    assert S.default_health("w", store)["activity"] == {"last_turn_at": None}
+    t = store.submit("a", requester="alice", manager="m")
+    store.update(t.id, state=T.RUNNING, started="2026-11-01T15:51:07+00:00")
+    store.update(t.id, state=T.DONE, finished="2026-11-01T15:52:50+00:00")
+    u = store.submit("b", requester="alice", manager="m")
+    store.update(u.id, state=T.RUNNING, started="2026-11-01T15:54:37+00:00")
+    assert S.default_health("w", store)["activity"] == {"last_turn_at": "2026-11-01T15:54:37+00:00"}
+
+
+def test_the_secretarys_snapshot_carries_a_workers_activity():
+    from agentic_lab.secretary import status as ST
+    lb = registry.load(EXAMPLE)
+    w = next(a for a, x in lb.agents.items() if x.get("role") == "worker")
+    act = {"last_turn_at": "2026-11-01T15:56:47+00:00"}
+
+    class Workers:
+        def known(self):
+            return [w]
+
+        async def call(self, aid, tool, args=None, retries=None):
+            return {"tasks": {"done": 2}, "activity": act} if tool == "health_check" else []
+    snap = asyncio.run(ST.collect(lb, Workers()))
+    assert snap["agents"][w]["activity"] == act

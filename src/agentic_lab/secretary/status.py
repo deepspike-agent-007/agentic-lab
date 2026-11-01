@@ -120,6 +120,7 @@ async def collect(lab, workers: Workers, broker=None, local_units=None, managers
                              gpu_processes=h.get("gpu_processes"), queue=h.get("tasks"),
                              keep_awake=h.get("keep_awake"), runs=h.get("runs"),
                              github=h.get("github") or {}, applied=h.get("applied"),
+                             activity=h.get("activity"),
                              usage=h.get("usage"), disk_free_gb=h.get("disk_free_gb"),
                              recent=[task_summary(t) for t in (tasks or [])[-RECENT:]][::-1])
         except WorkerError as e:
